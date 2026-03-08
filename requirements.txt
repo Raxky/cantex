@@ -1,0 +1,2 @@
+cantex-sdk
+python-telegram-bot==20.7
