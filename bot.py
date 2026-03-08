@@ -7,7 +7,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from cantex_sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
 
-TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_TOKEN = os.environ["8788392180:AAGFWNp_BYB1sl6z2sYDmjGBQLhHVpgDmQc"]
 
 operator = OperatorKeySigner.from_hex(os.environ["CANTEX_OPERATOR_KEY"])
 intent = IntentTradingKeySigner.from_hex(os.environ["CANTEX_TRADING_KEY"])
