@@ -3,7 +3,13 @@ import asyncio
 from decimal import Decimal
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes
+)
 
 from cantex_sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
 
@@ -12,23 +18,25 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 operator = OperatorKeySigner.from_hex(os.environ["CANTEX_OPERATOR_KEY"])
 intent = IntentTradingKeySigner.from_hex(os.environ["CANTEX_TRADING_KEY"])
 
+autoswap_task = None
 
-async def get_balance():
 
-    async with CantexSDK(operator, intent) as sdk:
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-        await sdk.authenticate()
-        info = await sdk.get_account_info()
+    message = """
+🤖 Cantex Bot
 
-        balances = []
+/balance - melihat saldo token
+/autoswap - menjalankan swap otomatis
+/stop - menghentikan autoswap
+"""
 
-        for token in info.tokens:
-            balances.append(
-                f"{token.instrument_symbol}: {token.unlocked_amount}"
-            )
+    await update.message.reply_text(message)
 
-        return "\n".join(balances)
 
+# -------------------------
+# BALANCE
+# -------------------------
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -36,21 +44,121 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        b = await get_balance()
+        async with CantexSDK(operator, intent) as sdk:
 
-        await update.message.reply_text(b)
+            await sdk.authenticate()
+            info = await sdk.get_account_info()
+
+            text = ""
+
+            for token in info.tokens:
+                text += f"{token.instrument_symbol}: {token.unlocked_amount}\n"
+
+            await update.message.reply_text(text)
 
     except Exception as e:
 
         await update.message.reply_text(f"Error: {e}")
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# -------------------------
+# AUTOSWAP
+# -------------------------
+
+async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "Cantex Bot Ready\n\nCommands:\n/balance"
+        "Masukkan interval autoswap dalam detik.\nContoh:\n60 = swap setiap 60 detik"
     )
 
+    context.user_data["waiting_interval"] = True
+
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    global autoswap_task
+
+    if context.user_data.get("waiting_interval"):
+
+        try:
+
+            interval = int(update.message.text)
+
+            context.user_data["waiting_interval"] = False
+
+            if autoswap_task:
+                await update.message.reply_text("Autoswap sudah berjalan.")
+                return
+
+            autoswap_task = asyncio.create_task(
+                swap_loop(interval, update.effective_chat.id, context.application)
+            )
+
+            await update.message.reply_text(
+                f"Autoswap dimulai setiap {interval} detik."
+            )
+
+        except:
+
+            await update.message.reply_text("Masukkan angka yang benar.")
+
+
+async def swap_loop(interval, chat_id, app):
+
+    while True:
+
+        try:
+
+            async with CantexSDK(operator, intent) as sdk:
+
+                await sdk.authenticate()
+
+                pools = await sdk.get_pool_info()
+
+                if not pools.pools:
+                    await app.bot.send_message(chat_id, "Pool tidak ditemukan.")
+                    return
+
+                pool = pools.pools[0]
+
+                result = await sdk.swap(
+                    sell_amount=Decimal("1"),
+                    sell_instrument=pool.token_a,
+                    buy_instrument=pool.token_b,
+                )
+
+                await app.bot.send_message(chat_id, f"Swap berhasil: {result}")
+
+        except Exception as e:
+
+            await app.bot.send_message(chat_id, f"Error swap: {e}")
+
+        await asyncio.sleep(interval)
+
+
+# -------------------------
+# STOP
+# -------------------------
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    global autoswap_task
+
+    if autoswap_task:
+
+        autoswap_task.cancel()
+        autoswap_task = None
+
+        await update.message.reply_text("Autoswap dihentikan.")
+
+    else:
+
+        await update.message.reply_text("Autoswap tidak sedang berjalan.")
+
+
+# -------------------------
+# MAIN
+# -------------------------
 
 def main():
 
@@ -58,8 +166,12 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance))
+    app.add_handler(CommandHandler("autoswap", autoswap))
+    app.add_handler(CommandHandler("stop", stop))
 
-    app.run_polling()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
