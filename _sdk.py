@@ -1124,14 +1124,23 @@ class CantexSDK:
     async def swap(
         self,
         sell_amount: Decimal,
-        sell_instrument: InstrumentId,
-        buy_instrument: InstrumentId,
+        sell_instrument: InstrumentId | str,
+        buy_instrument: InstrumentId | str,
     ) -> dict:
         """Execute a token swap via the intent-based trading flow."""
+
+        # convert string → InstrumentId
+        if isinstance(sell_instrument, str):
+            sell_instrument = InstrumentId(sell_instrument)
+
+        if isinstance(buy_instrument, str):
+            buy_instrument = InstrumentId(buy_instrument)
+
         logger.info(
             "Intent swap: %s %s -> %s",
             sell_amount, sell_instrument.id, buy_instrument.id,
         )
+
         result = await self._build_sign_submit(
             "/v1/intent/build/pool/swap",
             {
@@ -1143,5 +1152,6 @@ class CantexSDK:
             },
             intent=True,
         )
+
         logger.debug("Intent swap submitted: %s", result)
         return result
