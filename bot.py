@@ -1,18 +1,24 @@
+import os
 import asyncio
 from decimal import Decimal
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from _sdk import CantexSDK, InstrumentId
+from _sdk import (
+    CantexSDK,
+    OperatorKeySigner,
+    IntentTradingKeySigner
+)
 
-TOKEN = "ISI_TOKEN_BOT"
-OWNER_ID = 123456789
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID"))
 
-PRIVATE_KEY = "ISI_PRIVATE_KEY"
-
-sdk = CantexSDK(private_key=PRIVATE_KEY)
+OPERATOR_KEY = os.getenv("OPERATOR_KEY")
+TRADING_KEY = os.getenv("TRADING_KEY")
+API_KEY = os.getenv("API_KEY")
 
 running = False
+sdk = None
 
 
 def owner_only(func):
@@ -24,19 +30,27 @@ def owner_only(func):
 
 
 async def swap_loop(update: Update):
-    global running
 
-    cc = InstrumentId("CC")
-    usdc = InstrumentId("USDCx")
+    global running, sdk
 
     while running:
         try:
-            balances = await sdk.get_balances()
 
-            cc_balance = Decimal(balances.get("CC", 0))
-            usdc_balance = Decimal(balances.get("USDCx", 0))
+            account = await sdk.get_account_info()
 
-            if cc_balance > 1:
+            cc_balance = Decimal("0")
+            usdc_balance = Decimal("0")
+
+            for b in account.balances:
+
+                if b.instrument_symbol == "CC":
+                    cc_balance = b.unlocked_amount
+
+                if b.instrument_symbol == "USDCx":
+                    usdc_balance = b.unlocked_amount
+
+            if cc_balance > Decimal("1"):
+
                 await sdk.swap(
                     sell_amount=cc_balance,
                     sell_instrument="CC",
@@ -44,10 +58,11 @@ async def swap_loop(update: Update):
                 )
 
                 await update.message.reply_text(
-                    f"Swap CC → USDCx\nAmount: {cc_balance}"
+                    f"Swap CC → USDCx : {cc_balance}"
                 )
 
-            elif usdc_balance > 1:
+            elif usdc_balance > Decimal("1"):
+
                 await sdk.swap(
                     sell_amount=usdc_balance,
                     sell_instrument="USDCx",
@@ -55,17 +70,21 @@ async def swap_loop(update: Update):
                 )
 
                 await update.message.reply_text(
-                    f"Swap USDCx → CC\nAmount: {usdc_balance}"
+                    f"Swap USDCx → CC : {usdc_balance}"
                 )
 
         except Exception as e:
-            await update.message.reply_text(f"Swap Error: {e}")
+
+            await update.message.reply_text(
+                f"Swap Error: {e}"
+            )
 
         await asyncio.sleep(10)
 
 
 @owner_only
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     global running
 
     if running:
@@ -73,6 +92,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     running = True
+
     await update.message.reply_text("Bot started")
 
     asyncio.create_task(swap_loop(update))
@@ -80,20 +100,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @owner_only
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     global running
+
     running = False
+
     await update.message.reply_text("Bot stopped")
 
 
 async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
+    global sdk
 
-    print("Bot running...")
+    if not TOKEN:
+        raise Exception("TELEGRAM_TOKEN not set")
 
-    await app.run_polling()
+    operator = OperatorKeySigner.from_string(OPERATOR_KEY)
+    intent = IntentTradingKeySigner.from_string(TRADING_KEY)
+
+    async with CantexSDK(operator, intent) as sdk_instance:
+
+        sdk = sdk_instance
+
+        if API_KEY:
+            sdk._api_key = API_KEY
+
+        await sdk.authenticate()
+
+        app = ApplicationBuilder().token(TOKEN).build()
+
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("stop", stop))
+
+        print("Bot running...")
+
+        await app.run_polling()
 
 
 if __name__ == "__main__":
