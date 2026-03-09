@@ -11,9 +11,19 @@ from telegram.ext import (
     ContextTypes
 )
 
-from cantex_sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
+from _sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
+
+
+# =========================
+# CONFIG
+# =========================
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+
+BASE_URL = os.getenv(
+    "CANTEX_BASE_URL",
+    "https://api.cantex.io"   # MAINNET
+)
 
 operator = OperatorKeySigner.from_hex(os.environ["CANTEX_OPERATOR_KEY"])
 intent = IntentTradingKeySigner.from_hex(os.environ["CANTEX_TRADING_KEY"])
@@ -21,22 +31,26 @@ intent = IntentTradingKeySigner.from_hex(os.environ["CANTEX_TRADING_KEY"])
 autoswap_task = None
 
 
+# =========================
+# START
+# =========================
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    message = """
-🤖 Cantex Bot
+    text = """
+🤖 Cantex Volume Bot
 
-/balance - melihat saldo token
-/autoswap - menjalankan swap otomatis
-/stop - menghentikan autoswap
+/balance - cek saldo
+/autoswap - mulai autoswap
+/stop - hentikan autoswap
 """
 
-    await update.message.reply_text(message)
+    await update.message.reply_text(text)
 
 
-# -------------------------
+# =========================
 # BALANCE
-# -------------------------
+# =========================
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -44,7 +58,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
-        async with CantexSDK(operator, intent) as sdk:
+        async with CantexSDK(operator, intent, base_url=BASE_URL) as sdk:
 
             await sdk.authenticate()
             info = await sdk.get_account_info()
@@ -61,37 +75,40 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error: {e}")
 
 
-# -------------------------
-# AUTOSWAP
-# -------------------------
+# =========================
+# AUTOSWAP START
+# =========================
 
 async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    await update.message.reply_text(
-        "Masukkan jumlah token yang ingin di-swap.\nContoh:\n0.1"
-    )
-
     context.user_data["waiting_amount"] = True
 
+    await update.message.reply_text(
+        "Masukkan jumlah CC yang ingin di swap.\nContoh:\n0.1"
+    )
+
+
+# =========================
+# MESSAGE HANDLER
+# =========================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global autoswap_task
 
-    # --------------------
     # INPUT AMOUNT
-    # --------------------
     if context.user_data.get("waiting_amount"):
 
         try:
 
-            amount = update.message.text
+            amount = Decimal(update.message.text)
+
             context.user_data["swap_amount"] = amount
             context.user_data["waiting_amount"] = False
             context.user_data["waiting_interval"] = True
 
             await update.message.reply_text(
-                "Masukkan interval autoswap dalam detik.\nContoh:\n60"
+                "Masukkan interval swap (detik)\nContoh:\n60"
             )
 
         except:
@@ -100,9 +117,8 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # --------------------
+
     # INPUT INTERVAL
-    # --------------------
     if context.user_data.get("waiting_interval"):
 
         try:
@@ -113,6 +129,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data["waiting_interval"] = False
 
             if autoswap_task:
+
                 await update.message.reply_text("Autoswap sudah berjalan.")
                 return
 
@@ -121,7 +138,12 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             await update.message.reply_text(
-                f"Autoswap dimulai.\nJumlah: {amount}\nInterval: {interval} detik"
+                f"""
+✅ Autoswap dimulai
+
+Amount CC : {amount}
+Interval  : {interval} detik
+"""
             )
 
         except:
@@ -129,47 +151,30 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Masukkan angka interval yang benar.")
 
 
+# =========================
+# SWAP LOOP
+# =========================
+
 async def swap_loop(amount, interval, chat_id, app):
 
-    direction = True  # True = CC -> USDCx, False = USDCx -> CC
+    direction = True
 
     while True:
 
         try:
 
-            async with CantexSDK(operator, intent) as sdk:
+            async with CantexSDK(operator, intent, base_url=BASE_URL) as sdk:
 
                 await sdk.authenticate()
 
-                pools = await sdk.get_pool_info()
-
-                pool = None
-
-                # cari pool CC/USDCx
-                for p in pools.pools:
-                    if (
-                        (p.token_a == "CC" and p.token_b == "USDCx") or
-                        (p.token_a == "USDCx" and p.token_b == "CC")
-                    ):
-                        pool = p
-                        break
-
-                if not pool:
-                    await app.bot.send_message(chat_id, "Pool CC/USDCx tidak ditemukan.")
-                    return
-
-                # =========================
-                # CC -> USDCx
-                # =========================
+                # CC → USDCx
                 if direction:
 
                     sell = "CC"
                     buy = "USDCx"
                     sell_amount = Decimal(amount)
 
-                # =========================
-                # USDCx -> CC
-                # =========================
+                # USDCx → CC (ALL BALANCE)
                 else:
 
                     info = await sdk.get_account_info()
@@ -177,11 +182,18 @@ async def swap_loop(amount, interval, chat_id, app):
                     usdc_balance = Decimal("0")
 
                     for token in info.tokens:
+
                         if token.instrument_symbol == "USDCx":
+
                             usdc_balance = Decimal(token.unlocked_amount)
 
                     if usdc_balance == 0:
-                        await app.bot.send_message(chat_id, "Saldo USDCx kosong.")
+
+                        await app.bot.send_message(
+                            chat_id,
+                            "Saldo USDCx kosong."
+                        )
+
                         await asyncio.sleep(interval)
                         continue
 
@@ -189,29 +201,38 @@ async def swap_loop(amount, interval, chat_id, app):
                     buy = "CC"
                     sell_amount = usdc_balance
 
-                result = await sdk.swap(
+                await sdk.swap(
+
                     sell_amount=sell_amount,
                     sell_instrument=sell,
-                    buy_instrument=buy,
+                    buy_instrument=buy
+
                 )
 
                 await app.bot.send_message(
+
                     chat_id,
-                    f"Swap berhasil\n{sell} → {buy}\nAmount: {sell_amount}"
+                    f"""
+✅ Swap berhasil
+
+{sell} → {buy}
+Amount : {sell_amount}
+"""
+
                 )
 
                 direction = not direction
 
         except Exception as e:
 
-            await app.bot.send_message(chat_id, f"Error swap: {e}")
+            await app.bot.send_message(chat_id, f"Swap Error: {e}")
 
         await asyncio.sleep(interval)
 
 
-# -------------------------
+# =========================
 # STOP
-# -------------------------
+# =========================
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -226,12 +247,12 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
 
-        await update.message.reply_text("Autoswap tidak sedang berjalan.")
+        await update.message.reply_text("Autoswap tidak berjalan.")
 
 
-# -------------------------
+# =========================
 # MAIN
-# -------------------------
+# =========================
 
 def main():
 
@@ -242,7 +263,9 @@ def main():
     app.add_handler(CommandHandler("autoswap", autoswap))
     app.add_handler(CommandHandler("stop", stop))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, message_handler)
+    )
 
     app.run_polling(drop_pending_updates=True)
 
