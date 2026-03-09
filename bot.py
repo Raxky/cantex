@@ -7,29 +7,40 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    filters,
-    ContextTypes
+    ContextTypes,
+    filters
 )
 
 from _sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
-OWNER_ID = int(os.getenv("OWNER_ID"))
 
 # =========================
 # CONFIG
 # =========================
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+OWNER_ID = int(os.environ["OWNER_ID"])
 
 BASE_URL = os.getenv(
     "CANTEX_BASE_URL",
-    "https://api.cantex.io"   # MAINNET
+    "https://api.cantex.io"
 )
 
 operator = OperatorKeySigner.from_hex(os.environ["CANTEX_OPERATOR_KEY"])
 intent = IntentTradingKeySigner.from_hex(os.environ["CANTEX_TRADING_KEY"])
 
 autoswap_task = None
+pool = None
 
+# =========================
+# OWNER CHECK
+# =========================
+
+def is_owner(update: Update):
+
+    return (
+        update.effective_user.id == OWNER_ID
+        and update.effective_chat.type == "private"
+    )
 
 # =========================
 # START
@@ -39,17 +50,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_owner(update):
         return
-    
+
     text = """
 🤖 Cantex Volume Bot
 
-/balance - cek saldo
-/autoswap - mulai autoswap
-/stop - hentikan autoswap
+Commands:
+
+/balance
+/autoswap
+/stop
 """
 
     await update.message.reply_text(text)
-
 
 # =========================
 # BALANCE
@@ -80,9 +92,8 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"Error: {e}")
 
-
 # =========================
-# AUTOSWAP START
+# AUTOSWAP COMMAND
 # =========================
 
 async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -93,9 +104,8 @@ async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_amount"] = True
 
     await update.message.reply_text(
-        "Masukkan jumlah CC yang ingin di swap.\nContoh:\n0.1"
+        "Masukkan jumlah CC yang ingin di swap\nContoh:\n0.1"
     )
-
 
 # =========================
 # MESSAGE HANDLER
@@ -125,10 +135,9 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except:
 
-            await update.message.reply_text("Masukkan angka yang benar.")
+            await update.message.reply_text("Input angka yang benar.")
 
         return
-
 
     # INPUT INTERVAL
     if context.user_data.get("waiting_interval"):
@@ -151,7 +160,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             await update.message.reply_text(
                 f"""
-✅ Autoswap dimulai
+Autoswap dimulai
 
 Amount CC : {amount}
 Interval  : {interval} detik
@@ -162,12 +171,32 @@ Interval  : {interval} detik
 
             await update.message.reply_text("Masukkan angka interval yang benar.")
 
+# =========================
+# FIND POOL
+# =========================
+
+async def find_pool(sdk):
+
+    pools = await sdk.get_pools_info()
+
+    for p in pools:
+
+        if (
+            ("CC" in p.token_a.id and "USDCx" in p.token_b.id)
+            or
+            ("USDCx" in p.token_a.id and "CC" in p.token_b.id)
+        ):
+            return p
+
+    return None
 
 # =========================
 # SWAP LOOP
 # =========================
 
 async def swap_loop(amount, interval, chat_id, app):
+
+    global pool
 
     direction = True
 
@@ -179,14 +208,42 @@ async def swap_loop(amount, interval, chat_id, app):
 
                 await sdk.authenticate()
 
+                # cari pool sekali saja
+                if pool is None:
+
+                    pool = await find_pool(sdk)
+
+                    if pool is None:
+
+                        await app.bot.send_message(
+                            chat_id,
+                            "Pool CC / USDCx tidak ditemukan"
+                        )
+
+                        return
+
+                # =========================
                 # CC → USDCx
+                # =========================
+
                 if direction:
 
-                    sell = "CC"
-                    buy = "USDCx"
+                    if "CC" in pool.token_a.id:
+
+                        sell = pool.token_a
+                        buy = pool.token_b
+
+                    else:
+
+                        sell = pool.token_b
+                        buy = pool.token_a
+
                     sell_amount = Decimal(amount)
 
-                # USDCx → CC (ALL BALANCE)
+                # =========================
+                # USDCx → CC
+                # =========================
+
                 else:
 
                     info = await sdk.get_account_info()
@@ -203,15 +260,27 @@ async def swap_loop(amount, interval, chat_id, app):
 
                         await app.bot.send_message(
                             chat_id,
-                            "Saldo USDCx kosong."
+                            "Saldo USDCx kosong"
                         )
 
                         await asyncio.sleep(interval)
                         continue
 
-                    sell = "USDCx"
-                    buy = "CC"
+                    if "USDCx" in pool.token_a.id:
+
+                        sell = pool.token_a
+                        buy = pool.token_b
+
+                    else:
+
+                        sell = pool.token_b
+                        buy = pool.token_a
+
                     sell_amount = usdc_balance
+
+                # =========================
+                # EXECUTE SWAP
+                # =========================
 
                 await sdk.swap(
 
@@ -224,23 +293,25 @@ async def swap_loop(amount, interval, chat_id, app):
                 await app.bot.send_message(
 
                     chat_id,
-                    f"""
-✅ Swap berhasil
 
-{sell} → {buy}
+                    f"""
+Swap berhasil
+
+{sell.id} → {buy.id}
 Amount : {sell_amount}
 """
-
                 )
 
                 direction = not direction
 
         except Exception as e:
 
-            await app.bot.send_message(chat_id, f"Swap Error: {e}")
+            await app.bot.send_message(
+                chat_id,
+                f"Swap Error: {e}"
+            )
 
         await asyncio.sleep(interval)
-
 
 # =========================
 # STOP
@@ -264,21 +335,13 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text("Autoswap tidak berjalan.")
 
-
 # =========================
 # MAIN
 # =========================
-def is_owner(update: Update):
 
-    return (
-        update.effective_user.id == OWNER_ID
-        and update.effective_chat.type == "private"
-    )
 def main():
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
-    app.bot_data["owner_id"] = OWNER_ID
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance))
@@ -290,7 +353,6 @@ def main():
     )
 
     app.run_polling(drop_pending_updates=True)
-
 
 if __name__ == "__main__":
     main()
