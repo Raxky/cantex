@@ -1,2 +1,1 @@
 python-telegram-bot==21.6
-git+https://github.com/cantex-labs/cantex-sdk-python.git
