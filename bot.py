@@ -39,8 +39,8 @@ async def swap_loop(update: Update):
             if cc_balance > 1:
                 await sdk.swap(
                     sell_amount=cc_balance,
-                    sell_instrument=cc,
-                    buy_instrument=usdc
+                    sell_instrument="CC",
+                    buy_instrument="USDCx"
                 )
 
                 await update.message.reply_text(
@@ -50,8 +50,8 @@ async def swap_loop(update: Update):
             elif usdc_balance > 1:
                 await sdk.swap(
                     sell_amount=usdc_balance,
-                    sell_instrument=usdc,
-                    buy_instrument=cc
+                    sell_instrument="USDCx",
+                    buy_instrument="CC"
                 )
 
                 await update.message.reply_text(
