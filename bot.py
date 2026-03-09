@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from cantex_sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
-BASE_URL = os.getenv("CANTEX_BASE_URL", "https://api.testnet.cantex.io")
+
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 operator = OperatorKeySigner.from_hex(os.environ["CANTEX_OPERATOR_KEY"])
