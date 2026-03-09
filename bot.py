@@ -68,21 +68,47 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "Masukkan interval autoswap dalam detik.\nContoh:\n60 = swap setiap 60 detik"
+        "Masukkan jumlah token yang ingin di-swap.\nContoh:\n0.1"
     )
 
-    context.user_data["waiting_interval"] = True
+    context.user_data["waiting_amount"] = True
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global autoswap_task
 
+    # --------------------
+    # INPUT AMOUNT
+    # --------------------
+    if context.user_data.get("waiting_amount"):
+
+        try:
+
+            amount = update.message.text
+            context.user_data["swap_amount"] = amount
+            context.user_data["waiting_amount"] = False
+            context.user_data["waiting_interval"] = True
+
+            await update.message.reply_text(
+                "Masukkan interval autoswap dalam detik.\nContoh:\n60"
+            )
+
+        except:
+
+            await update.message.reply_text("Masukkan angka yang benar.")
+
+        return
+
+    # --------------------
+    # INPUT INTERVAL
+    # --------------------
     if context.user_data.get("waiting_interval"):
 
         try:
 
             interval = int(update.message.text)
+            amount = context.user_data["swap_amount"]
 
             context.user_data["waiting_interval"] = False
 
@@ -91,19 +117,21 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             autoswap_task = asyncio.create_task(
-                swap_loop(interval, update.effective_chat.id, context.application)
+                swap_loop(amount, interval, update.effective_chat.id, context.application)
             )
 
             await update.message.reply_text(
-                f"Autoswap dimulai setiap {interval} detik."
+                f"Autoswap dimulai.\nJumlah: {amount}\nInterval: {interval} detik"
             )
 
         except:
 
-            await update.message.reply_text("Masukkan angka yang benar.")
+            await update.message.reply_text("Masukkan angka interval yang benar.")
 
 
-async def swap_loop(interval, chat_id, app):
+async def swap_loop(amount, interval, chat_id, app):
+
+    direction = True  # True = CC -> USDCx, False = USDCx -> CC
 
     while True:
 
@@ -115,19 +143,64 @@ async def swap_loop(interval, chat_id, app):
 
                 pools = await sdk.get_pool_info()
 
-                if not pools.pools:
-                    await app.bot.send_message(chat_id, "Pool tidak ditemukan.")
+                pool = None
+
+                # cari pool CC/USDCx
+                for p in pools.pools:
+                    if (
+                        (p.token_a == "CC" and p.token_b == "USDCx") or
+                        (p.token_a == "USDCx" and p.token_b == "CC")
+                    ):
+                        pool = p
+                        break
+
+                if not pool:
+                    await app.bot.send_message(chat_id, "Pool CC/USDCx tidak ditemukan.")
                     return
 
-                pool = pools.pools[0]
+                # =========================
+                # CC -> USDCx
+                # =========================
+                if direction:
+
+                    sell = "CC"
+                    buy = "USDCx"
+                    sell_amount = Decimal(amount)
+
+                # =========================
+                # USDCx -> CC
+                # =========================
+                else:
+
+                    info = await sdk.get_account_info()
+
+                    usdc_balance = Decimal("0")
+
+                    for token in info.tokens:
+                        if token.instrument_symbol == "USDCx":
+                            usdc_balance = Decimal(token.unlocked_amount)
+
+                    if usdc_balance == 0:
+                        await app.bot.send_message(chat_id, "Saldo USDCx kosong.")
+                        await asyncio.sleep(interval)
+                        continue
+
+                    sell = "USDCx"
+                    buy = "CC"
+                    sell_amount = usdc_balance
 
                 result = await sdk.swap(
-                    sell_amount=Decimal("1"),
-                    sell_instrument=pool.token_a,
-                    buy_instrument=pool.token_b,
+                    sell_amount=sell_amount,
+                    sell_instrument=sell,
+                    buy_instrument=buy,
                 )
 
-                await app.bot.send_message(chat_id, f"Swap berhasil: {result}")
+                await app.bot.send_message(
+                    chat_id,
+                    f"Swap berhasil\n{sell} → {buy}\nAmount: {sell_amount}"
+                )
+
+                direction = not direction
 
         except Exception as e:
 
