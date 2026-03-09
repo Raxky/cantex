@@ -39,8 +39,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_owner(update):
         return
-
-    await update.message.reply_text("Bot aktif.")
     
     text = """
 🤖 Cantex Volume Bot
@@ -249,6 +247,9 @@ Amount : {sell_amount}
 # =========================
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_owner(update):
+        return
 
     global autoswap_task
 
