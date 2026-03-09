@@ -242,11 +242,7 @@ class Pool:
     """A single liquidity pool from the pools info response."""
 
     contract_id: str
-    if (
-    ("CC" in p.token_a.id and "USDCx" in p.token_b.id) or
-    ("USDCx" in p.token_a.id and "CC" in p.token_b.id)
-    ):
-
+    
     @classmethod
     def _from_raw(cls, data: dict) -> Pool:
         return cls(
