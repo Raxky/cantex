@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 from _sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
-
+OWNER_ID = int(os.getenv("OWNER_ID"))
 
 # =========================
 # CONFIG
@@ -37,6 +37,11 @@ autoswap_task = None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not is_owner(update):
+        return
+
+    await update.message.reply_text("Bot aktif.")
+    
     text = """
 🤖 Cantex Volume Bot
 
@@ -53,6 +58,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_owner(update):
+        return
 
     await update.message.reply_text("Checking balance...")
 
@@ -81,6 +89,9 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not is_owner(update):
+        return
+
     context.user_data["waiting_amount"] = True
 
     await update.message.reply_text(
@@ -93,6 +104,9 @@ async def autoswap(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_owner(update):
+        return
 
     global autoswap_task
 
@@ -253,10 +267,17 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # MAIN
 # =========================
+def is_owner(update: Update):
 
+    return (
+        update.effective_user.id == OWNER_ID
+        and update.effective_chat.type == "private"
+    )
 def main():
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    app.bot_data["owner_id"] = OWNER_ID
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("balance", balance))
