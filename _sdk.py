@@ -704,7 +704,10 @@ class CantexSDK:
             f"CantexSDK(base_url={self.base_url!r}, "
             f"authenticated={self._api_key is not None})"
         )
-
+    def _ensure_instrument(self, inst):
+        if isinstance(inst, str):
+            return InstrumentId(inst)
+        return inst
     # -- session lifecycle ---------------------------------------------------
 
     async def _get_session(self) -> aiohttp.ClientSession:
@@ -1128,14 +1131,9 @@ class CantexSDK:
         buy_instrument: InstrumentId | str,
     ) -> dict:
         """Execute a token swap via the intent-based trading flow."""
-
-        # convert string → InstrumentId
-        if isinstance(sell_instrument, str):
-            sell_instrument = InstrumentId(sell_instrument)
-
-        if isinstance(buy_instrument, str):
-            buy_instrument = InstrumentId(buy_instrument)
-
+        sell_instrument = self._ensure_instrument(sell_instrument)
+        buy_instrument = self._ensure_instrument(buy_instrument)
+        
         logger.info(
             "Intent swap: %s %s -> %s",
             sell_amount, sell_instrument.id, buy_instrument.id,
