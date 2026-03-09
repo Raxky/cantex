@@ -4,11 +4,8 @@ from decimal import Decimal
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-from _sdk import (
-    CantexSDK,
-    OperatorKeySigner,
-    IntentTradingKeySigner
-)
+from _sdk import CantexSDK, OperatorKeySigner, IntentTradingKeySigner
+
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 OWNER_ID = int(os.getenv("OWNER_ID"))
@@ -19,6 +16,13 @@ API_KEY = os.getenv("API_KEY")
 
 running = False
 sdk = None
+
+
+def write_secret_file(path, content):
+    if not content:
+        raise Exception(f"Missing environment variable for {path}")
+    with open(path, "w") as f:
+        f.write(content)
 
 
 def owner_only(func):
@@ -75,9 +79,12 @@ async def swap_loop(update: Update):
 
         except Exception as e:
 
-            await update.message.reply_text(
-                f"Swap Error: {e}"
-            )
+            print("Swap error:", e)
+
+            try:
+                await update.message.reply_text(f"Swap Error: {e}")
+            except:
+                pass
 
         await asyncio.sleep(10)
 
@@ -115,15 +122,20 @@ async def main():
     if not TOKEN:
         raise Exception("TELEGRAM_TOKEN not set")
 
-    operator = OperatorKeySigner.from_string(OPERATOR_KEY)
-    intent = IntentTradingKeySigner.from_string(TRADING_KEY)
+    if not OWNER_ID:
+        raise Exception("OWNER_ID not set")
+
+    # create temporary secret files
+    write_secret_file("operator.pem", OPERATOR_KEY)
+    write_secret_file("intent.key", TRADING_KEY)
+    write_secret_file("api_key.txt", API_KEY)
+
+    operator = OperatorKeySigner.from_file("operator.pem")
+    intent = IntentTradingKeySigner.from_file("intent.key")
 
     async with CantexSDK(operator, intent) as sdk_instance:
 
         sdk = sdk_instance
-
-        if API_KEY:
-            sdk._api_key = API_KEY
 
         await sdk.authenticate()
 
